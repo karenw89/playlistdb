@@ -1,14 +1,14 @@
 # playlistdb
 
-A small Rust library for reading M3U/M3U8 playlists and reporting on what's
-in them: track count, total run time, how many entries are missing
+A small Rust library for reading M3U/M3U8 and PLS playlists and reporting on
+what's in them: track count, total run time, how many entries are missing
 artist/title metadata. No dependencies, standard library only.
 
 I keep playlists exported from a few different players and none of them
 agree on what counts as "duration unknown" or how consistently they fill in
-`#EXTINF` labels. Rather than eyeball each file, this gives me one parser and
-one summary format I can point any of them at, in a form scripts can consume
-(`--json`-shaped output) or a human can read directly.
+track labels. Rather than eyeball each file, this gives me one parser per
+format and one summary format I can point any of them at, in a form scripts
+can consume (`--json`-shaped output) or a human can read directly.
 
 This crate has no binary. It's meant to be pulled into your own CLI or
 tool; see below for the couple of lines that wires it up.
@@ -17,8 +17,10 @@ tool; see below for the couple of lines that wires it up.
 
 - Parses M3U/M3U8 text into a `Playlist` of `Track`s (path, title, artist,
   duration).
-- `#EXTINF:-1,...` (the M3U convention for "duration unknown") is normalized
-  to `None` rather than kept as a sentinel value.
+- Parses PLS text the same way, keyed off the `File<n>`/`Title<n>`/
+  `Length<n>` triples and ordered by index rather than line order.
+- `#EXTINF:-1,...` and PLS's `Length<n>=-1` (both conventions for "duration
+  unknown") are normalized to `None` rather than kept as a sentinel value.
 - Computes total duration and a count of tracks missing title or artist.
 - Renders a `Summary` either as plain text or as JSON, from the same data,
   so a caller's own `--json` flag can select the shape without touching the
@@ -61,5 +63,5 @@ JSON output (`--json`):
 
 ## Status
 
-Early. M3U/M3U8 in, plain-text and JSON summaries out. Not yet handling
-PLS or XSPF, and there's no writer (parse-only for now).
+Early. M3U/M3U8 and PLS in, plain-text and JSON summaries out. Not yet
+handling XSPF, and there's no writer (parse-only for now).

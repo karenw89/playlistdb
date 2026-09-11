@@ -1,4 +1,5 @@
 use crate::track::Track;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 pub struct Playlist {
@@ -38,6 +39,55 @@ impl Playlist {
         Playlist { name: name.into(), tracks }
     }
 
+    /// Parses the body of a PLS file. Entries are grouped by the trailing
+    /// index on each key (`File1`, `Title1`, `Length1`, ...); an entry with
+    /// no `File<n>` key is dropped since there's no path to point at.
+    /// `Length<n>` of -1 (PLS's "unknown duration" convention) is normalized
+    /// to `None`, matching the M3U parser.
+    pub fn parse_pls(name: impl Into<String>, contents: &str) -> Playlist {
+        let mut entries: BTreeMap<u32, PlsEntry> = BTreeMap::new();
+
+        for raw_line in contents.lines() {
+            let line = raw_line.trim();
+            if line.is_empty() || line.starts_with('[') || line.starts_with(';') {
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let value = value.trim();
+            let Some((prefix, index)) = split_key_index(key.trim()) else {
+                continue;
+            };
+
+            let entry = entries.entry(index).or_default();
+            match prefix.as_str() {
+                "file" => entry.file = Some(value.to_string()),
+                "title" => entry.title = Some(value.to_string()),
+                "length" => entry.length = value.parse::<i64>().ok(),
+                _ => {}
+            }
+        }
+
+        let mut tracks = Vec::new();
+        for (_, entry) in entries {
+            let Some(path) = entry.file else { continue };
+            let duration_secs = entry.length.filter(|d| *d >= 0);
+            let (artist, title) = match entry.title {
+                Some(label) => match label.split_once(" - ") {
+                    Some((artist, title)) => {
+                        (Some(artist.trim().to_string()), Some(title.trim().to_string()))
+                    }
+                    None => (None, Some(label)),
+                },
+                None => (None, None),
+            };
+            tracks.push(Track { path, title, artist, duration_secs });
+        }
+
+        Playlist { name: name.into(), tracks }
+    }
+
     pub fn total_duration_secs(&self) -> i64 {
         self.tracks.iter().filter_map(|t| t.duration_secs).sum()
     }
@@ -45,6 +95,26 @@ impl Playlist {
     pub fn missing_metadata_count(&self) -> usize {
         self.tracks.iter().filter(|t| t.title.is_none() || t.artist.is_none()).count()
     }
+}
+
+#[derive(Default)]
+struct PlsEntry {
+    file: Option<String>,
+    title: Option<String>,
+    length: Option<i64>,
+}
+
+/// Splits a PLS key like `Title12` into (`"title"`, `12`). Keys with no
+/// trailing digits (`Version`, `NumberOfEntries`) return `None` so callers
+/// can ignore them.
+fn split_key_index(key: &str) -> Option<(String, u32)> {
+    let digit_count = key.chars().rev().take_while(|c| c.is_ascii_digit()).count();
+    if digit_count == 0 {
+        return None;
+    }
+    let split_at = key.len() - digit_count;
+    let index = key[split_at..].parse::<u32>().ok()?;
+    Some((key[..split_at].to_lowercase(), index))
 }
 
 fn parse_extinf(rest: &str) -> (Option<i64>, Option<String>, Option<String>) {
@@ -98,5 +168,52 @@ mod tests {
         let playlist = Playlist::parse_m3u("test", m3u);
 
         assert_eq!(playlist.tracks[0].duration_secs, None);
+    }
+
+    #[test]
+    fn parses_pls_with_artist_and_title() {
+        let pls = "[playlist]\n\
+                    NumberOfEntries=2\n\
+                    File1=../music/roygbiv.flac\n\
+                    Title1=Boards of Canada - Roygbiv\n\
+                    Length1=245\n\
+                    File2=../music/xtal.flac\n\
+                    Title2=Aphex Twin - Xtal\n\
+                    Length2=220\n\
+                    Version=2\n";
+        let playlist = Playlist::parse_pls("test", pls);
+
+        assert_eq!(playlist.tracks.len(), 2);
+        assert_eq!(playlist.tracks[0].path, "../music/roygbiv.flac");
+        assert_eq!(playlist.tracks[0].artist.as_deref(), Some("Boards of Canada"));
+        assert_eq!(playlist.tracks[0].title.as_deref(), Some("Roygbiv"));
+        assert_eq!(playlist.tracks[0].duration_secs, Some(245));
+        assert_eq!(playlist.tracks[1].path, "../music/xtal.flac");
+    }
+
+    #[test]
+    fn pls_entries_are_ordered_by_index_not_file_order() {
+        let pls = "[playlist]\nTitle2=Second\nFile2=b.mp3\nTitle1=First\nFile1=a.mp3\n";
+        let playlist = Playlist::parse_pls("test", pls);
+
+        assert_eq!(playlist.tracks[0].path, "a.mp3");
+        assert_eq!(playlist.tracks[1].path, "b.mp3");
+    }
+
+    #[test]
+    fn pls_unknown_length_is_normalized_to_none() {
+        let pls = "[playlist]\nFile1=stream.mp3\nTitle1=Live Stream\nLength1=-1\n";
+        let playlist = Playlist::parse_pls("test", pls);
+
+        assert_eq!(playlist.tracks[0].duration_secs, None);
+    }
+
+    #[test]
+    fn pls_entry_without_file_is_dropped() {
+        let pls = "[playlist]\nTitle1=Orphan Title\nFile2=b.mp3\n";
+        let playlist = Playlist::parse_pls("test", pls);
+
+        assert_eq!(playlist.tracks.len(), 1);
+        assert_eq!(playlist.tracks[0].path, "b.mp3");
     }
 }
