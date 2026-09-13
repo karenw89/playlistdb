@@ -25,6 +25,8 @@ tool; see below for the couple of lines that wires it up.
 - Renders a `Summary` either as plain text or as JSON, from the same data,
   so a caller's own `--json` flag can select the shape without touching the
   underlying logic.
+- Writes a `Playlist` back out to M3U text (`to_m3u`), round-tripping
+  through `parse_m3u`.
 
 ## Usage
 
@@ -63,5 +65,6 @@ JSON output (`--json`):
 
 ## Status
 
-Early. M3U/M3U8 and PLS in, plain-text and JSON summaries out. Not yet
-handling XSPF, and there's no writer (parse-only for now).
+Early. M3U/M3U8 and PLS in, plain-text and JSON summaries out, M3U writer
+for round-tripping a `Playlist`. Not yet handling XSPF, and no duplicate
+track detection yet.

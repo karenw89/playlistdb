@@ -88,6 +88,29 @@ impl Playlist {
         Playlist { name: name.into(), tracks }
     }
 
+    /// Serializes back to M3U text. Round-trips with `parse_m3u`: a track
+    /// gets an `#EXTINF` line only if it has a duration, title, or artist to
+    /// report, and an unknown duration is written back out as `-1` (the same
+    /// convention `parse_m3u` reads it from).
+    pub fn to_m3u(&self) -> String {
+        let mut out = String::from("#EXTM3U\n");
+        for track in &self.tracks {
+            if track.duration_secs.is_some() || track.title.is_some() || track.artist.is_some() {
+                let duration = track.duration_secs.unwrap_or(-1);
+                let label = match (&track.artist, &track.title) {
+                    (Some(artist), Some(title)) => format!("{} - {}", artist, title),
+                    (None, Some(title)) => title.clone(),
+                    (Some(artist), None) => artist.clone(),
+                    (None, None) => String::new(),
+                };
+                out.push_str(&format!("#EXTINF:{},{}\n", duration, label));
+            }
+            out.push_str(&track.path);
+            out.push('\n');
+        }
+        out
+    }
+
     pub fn total_duration_secs(&self) -> i64 {
         self.tracks.iter().filter_map(|t| t.duration_secs).sum()
     }
@@ -215,5 +238,46 @@ mod tests {
 
         assert_eq!(playlist.tracks.len(), 1);
         assert_eq!(playlist.tracks[0].path, "b.mp3");
+    }
+
+    #[test]
+    fn to_m3u_round_trips_through_parse_m3u() {
+        let m3u = "#EXTM3U\n\
+                   #EXTINF:245,Boards of Canada - Roygbiv\n\
+                   ../music/roygbiv.flac\n\
+                   #EXTINF:-1,Live Stream\n\
+                   http://example.invalid/stream\n\
+                   song.mp3\n";
+        let original = Playlist::parse_m3u("test", m3u);
+
+        let rewritten = original.to_m3u();
+        let reparsed = Playlist::parse_m3u("test", &rewritten);
+
+        assert_eq!(reparsed.tracks, original.tracks);
+    }
+
+    #[test]
+    fn to_m3u_skips_extinf_for_tracks_with_no_metadata() {
+        let mut playlist = Playlist::new("test");
+        playlist.tracks.push(Track { path: "plain.mp3".to_string(), title: None, artist: None, duration_secs: None });
+
+        let m3u = playlist.to_m3u();
+
+        assert_eq!(m3u, "#EXTM3U\nplain.mp3\n");
+    }
+
+    #[test]
+    fn to_m3u_writes_unknown_duration_as_negative_one() {
+        let mut playlist = Playlist::new("test");
+        playlist.tracks.push(Track {
+            path: "stream.mp3".to_string(),
+            title: Some("Live Stream".to_string()),
+            artist: None,
+            duration_secs: None,
+        });
+
+        let m3u = playlist.to_m3u();
+
+        assert!(m3u.contains("#EXTINF:-1,Live Stream\n"));
     }
 }
