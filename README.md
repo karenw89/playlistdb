@@ -22,6 +22,8 @@ tool; see below for the couple of lines that wires it up.
 - `#EXTINF:-1,...` and PLS's `Length<n>=-1` (both conventions for "duration
   unknown") are normalized to `None` rather than kept as a sentinel value.
 - Computes total duration and a count of tracks missing title or artist.
+- Flags tracks that share the same path, in the order they first appear,
+  with how many times each one repeats.
 - Renders a `Summary` either as plain text or as JSON, from the same data,
   so a caller's own `--json` flag can select the shape without touching the
   underlying logic.
@@ -60,11 +62,11 @@ missing metadata: 1
 JSON output (`--json`):
 
 ```json
-{"name":"favorites.m3u","track_count":3,"total_duration_secs":725,"missing_metadata_count":1,"tracks":[{"path":"../music/roygbiv.flac","title":"Roygbiv","artist":"Boards of Canada","duration_secs":245},{"path":"../music/xtal.flac","title":"Xtal","artist":"Aphex Twin","duration_secs":220},{"path":"track_09.flac","title":null,"artist":null,"duration_secs":null}]}
+{"name":"favorites.m3u","track_count":3,"total_duration_secs":725,"missing_metadata_count":1,"duplicate_paths":[],"tracks":[{"path":"../music/roygbiv.flac","title":"Roygbiv","artist":"Boards of Canada","duration_secs":245},{"path":"../music/xtal.flac","title":"Xtal","artist":"Aphex Twin","duration_secs":220},{"path":"track_09.flac","title":null,"artist":null,"duration_secs":null}]}
 ```
 
 ## Status
 
 Early. M3U/M3U8 and PLS in, plain-text and JSON summaries out, M3U writer
-for round-tripping a `Playlist`. Not yet handling XSPF, and no duplicate
-track detection yet.
+for round-tripping a `Playlist`, duplicate-path detection. Not yet handling
+XSPF, and no pretty-printed JSON option yet.

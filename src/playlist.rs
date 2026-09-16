@@ -1,5 +1,5 @@
 use crate::track::Track;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub struct Playlist {
@@ -117,6 +117,27 @@ impl Playlist {
 
     pub fn missing_metadata_count(&self) -> usize {
         self.tracks.iter().filter(|t| t.title.is_none() || t.artist.is_none()).count()
+    }
+
+    /// Paths that occur more than once, in order of first appearance, paired
+    /// with how many times each occurs. Same path different case, or a
+    /// relative vs. absolute form of the same file, are treated as distinct;
+    /// this only catches exact string duplicates.
+    pub fn duplicate_paths(&self) -> Vec<(&str, usize)> {
+        let mut counts: HashMap<&str, usize> = HashMap::new();
+        for track in &self.tracks {
+            *counts.entry(track.path.as_str()).or_insert(0) += 1;
+        }
+
+        let mut seen = HashSet::new();
+        self.tracks
+            .iter()
+            .filter_map(|track| {
+                let path = track.path.as_str();
+                let count = counts[path];
+                if count > 1 && seen.insert(path) { Some((path, count)) } else { None }
+            })
+            .collect()
     }
 }
 
@@ -264,6 +285,24 @@ mod tests {
         let m3u = playlist.to_m3u();
 
         assert_eq!(m3u, "#EXTM3U\nplain.mp3\n");
+    }
+
+    #[test]
+    fn duplicate_paths_reports_repeated_paths_in_first_seen_order() {
+        let m3u = "b.mp3\na.mp3\nb.mp3\na.mp3\na.mp3\nc.mp3\n";
+        let playlist = Playlist::parse_m3u("test", m3u);
+
+        let duplicates = playlist.duplicate_paths();
+
+        assert_eq!(duplicates, vec![("b.mp3", 2), ("a.mp3", 3)]);
+    }
+
+    #[test]
+    fn duplicate_paths_is_empty_when_all_paths_are_unique() {
+        let m3u = "a.mp3\nb.mp3\n";
+        let playlist = Playlist::parse_m3u("test", m3u);
+
+        assert!(playlist.duplicate_paths().is_empty());
     }
 
     #[test]

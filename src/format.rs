@@ -51,6 +51,19 @@ impl<'a> Summary<'a> {
         out.push_str(&self.playlist.total_duration_secs().to_string());
         out.push_str(",\"missing_metadata_count\":");
         out.push_str(&self.playlist.missing_metadata_count().to_string());
+        out.push_str(",\"duplicate_paths\":[");
+        for (i, (path, count)) in self.playlist.duplicate_paths().into_iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push('{');
+            out.push_str("\"path\":");
+            out.push_str(&json_string(path));
+            out.push_str(",\"count\":");
+            out.push_str(&count.to_string());
+            out.push('}');
+        }
+        out.push(']');
         out.push_str(",\"tracks\":[");
         for (i, track) in self.playlist.tracks.iter().enumerate() {
             if i > 0 {
@@ -81,6 +94,13 @@ impl<'a> fmt::Display for Summary<'a> {
         writeln!(f, "tracks: {}", self.playlist.tracks.len())?;
         writeln!(f, "total duration: {}", format_duration(self.playlist.total_duration_secs()))?;
         writeln!(f, "missing metadata: {}", self.playlist.missing_metadata_count())?;
+        let duplicates = self.playlist.duplicate_paths();
+        if !duplicates.is_empty() {
+            writeln!(f, "duplicate tracks (by path): {}", duplicates.len())?;
+            for (path, count) in &duplicates {
+                writeln!(f, "  [{}x] {}", count, path)?;
+            }
+        }
         for track in &self.playlist.tracks {
             let label = match (&track.artist, &track.title) {
                 (Some(artist), Some(title)) => format!("{} - {}", artist, title),
@@ -140,6 +160,53 @@ mod tests {
 
         let json = Summary::new(&playlist).to_json();
         assert!(json.contains("\"title\":\"say \\\"hi\\\"\""));
+    }
+
+    #[test]
+    fn json_lists_duplicate_paths_with_counts() {
+        let mut playlist = Playlist::new("test");
+        for _ in 0..2 {
+            playlist.tracks.push(crate::track::Track {
+                path: "a.mp3".to_string(),
+                title: None,
+                artist: None,
+                duration_secs: None,
+            });
+        }
+
+        let json = Summary::new(&playlist).to_json();
+        assert!(json.contains("\"duplicate_paths\":[{\"path\":\"a.mp3\",\"count\":2}]"));
+    }
+
+    #[test]
+    fn human_output_lists_duplicates_when_present() {
+        let mut playlist = Playlist::new("test");
+        for _ in 0..2 {
+            playlist.tracks.push(crate::track::Track {
+                path: "a.mp3".to_string(),
+                title: None,
+                artist: None,
+                duration_secs: None,
+            });
+        }
+
+        let human = Summary::new(&playlist).render(OutputFormat::Human);
+        assert!(human.contains("duplicate tracks (by path): 1"));
+        assert!(human.contains("  [2x] a.mp3"));
+    }
+
+    #[test]
+    fn human_output_omits_duplicate_section_when_none() {
+        let mut playlist = Playlist::new("test");
+        playlist.tracks.push(crate::track::Track {
+            path: "a.mp3".to_string(),
+            title: None,
+            artist: None,
+            duration_secs: None,
+        });
+
+        let human = Summary::new(&playlist).render(OutputFormat::Human);
+        assert!(!human.contains("duplicate tracks"));
     }
 
     #[test]
