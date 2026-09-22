@@ -1,8 +1,8 @@
 # playlistdb
 
-A small Rust library for reading M3U/M3U8 and PLS playlists and reporting on
-what's in them: track count, total run time, how many entries are missing
-artist/title metadata. No dependencies, standard library only.
+A small Rust library for reading M3U/M3U8, PLS, and XSPF playlists and
+reporting on what's in them: track count, total run time, how many entries
+are missing artist/title metadata. No dependencies, standard library only.
 
 I keep playlists exported from a few different players and none of them
 agree on what counts as "duration unknown" or how consistently they fill in
@@ -19,6 +19,10 @@ tool; see below for the couple of lines that wires it up.
   duration).
 - Parses PLS text the same way, keyed off the `File<n>`/`Title<n>`/
   `Length<n>` triples and ordered by index rather than line order.
+- Parses XSPF (the XML dialect foobar2000, MusicBee, and others export),
+  reading `<location>`, `<title>`, `<creator>`, and `<duration>` out of each
+  `<track>`. `file://` locations are percent-decoded; other URI schemes are
+  kept as-is.
 - `#EXTINF:-1,...` and PLS's `Length<n>=-1` (both conventions for "duration
   unknown") are normalized to `None` rather than kept as a sentinel value.
 - Computes total duration and a count of tracks missing title or artist.
@@ -67,6 +71,6 @@ JSON output (`--json`):
 
 ## Status
 
-Early. M3U/M3U8 and PLS in, plain-text and JSON summaries out, M3U writer
-for round-tripping a `Playlist`, duplicate-path detection. Not yet handling
-XSPF, and no pretty-printed JSON option yet.
+Early. M3U/M3U8, PLS, and XSPF in, plain-text and JSON summaries out, M3U
+writer for round-tripping a `Playlist`, duplicate-path detection. No
+pretty-printed JSON option yet.

@@ -3,6 +3,6 @@ name = "playlistdb"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Parse and summarize audio playlists (M3U, PLS) with human or JSON output"
+description = "Parse and summarize audio playlists (M3U, PLS, XSPF) with human or JSON output"
 
 [dependencies]

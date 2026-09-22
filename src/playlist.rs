@@ -88,6 +88,35 @@ impl Playlist {
         Playlist { name: name.into(), tracks }
     }
 
+    /// Parses the body of an XSPF playlist (the XML dialect emitted by
+    /// tools like foobar2000 and MusicBee). Only `<trackList>/<track>`
+    /// children are read: `<location>`, `<title>`, `<creator>`,
+    /// `<duration>`. A track with no `<location>` is dropped, same as a PLS
+    /// entry with no `File<n>`. `<duration>` is milliseconds per the XSPF
+    /// spec and is converted to whole seconds; anything negative or
+    /// unparsable is normalized to `None`. `file://` locations have the
+    /// scheme stripped and are percent-decoded; other schemes (`http://`,
+    /// etc.) are kept as-is. CDATA sections aren't handled - values are
+    /// expected as plain escaped text, which is what every XSPF export
+    /// I've come across actually produces.
+    pub fn parse_xspf(name: impl Into<String>, contents: &str) -> Playlist {
+        let mut tracks = Vec::new();
+
+        for track_xml in extract_elements(contents, "track") {
+            let Some(location) = extract_element(track_xml, "location") else { continue };
+            let path = decode_location(&location);
+            let title = extract_element(track_xml, "title").map(|s| unescape_xml(&s));
+            let artist = extract_element(track_xml, "creator").map(|s| unescape_xml(&s));
+            let duration_secs = extract_element(track_xml, "duration")
+                .and_then(|s| s.parse::<i64>().ok())
+                .filter(|ms| *ms >= 0)
+                .map(|ms| ms / 1000);
+            tracks.push(Track { path, title, artist, duration_secs });
+        }
+
+        Playlist { name: name.into(), tracks }
+    }
+
     /// Serializes back to M3U text. Round-trips with `parse_m3u`: a track
     /// gets an `#EXTINF` line only if it has a duration, title, or artist to
     /// report, and an unknown duration is written back out as `-1` (the same
@@ -159,6 +188,140 @@ fn split_key_index(key: &str) -> Option<(String, u32)> {
     let split_at = key.len() - digit_count;
     let index = key[split_at..].parse::<u32>().ok()?;
     Some((key[..split_at].to_lowercase(), index))
+}
+
+/// Finds every top-level `<tag>...</tag>` element in `xml` and returns its
+/// inner text, untrimmed and still XML-escaped. Not a general XML parser -
+/// it doesn't track nesting depth, so it assumes `tag` doesn't contain
+/// itself (true for `track` inside `trackList`). A self-closing `<tag/>`
+/// has no inner text and is skipped, matching how `parse_xspf` treats a
+/// track with no `<location>`.
+fn extract_elements<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
+    let open = format!("<{}", tag);
+    let close = format!("</{}>", tag);
+    let mut elements = Vec::new();
+    let mut rest = xml;
+
+    while let Some(start) = find_tag_start(rest, &open) {
+        let after_open = &rest[start..];
+        let Some(gt) = after_open.find('>') else { break };
+        if after_open.as_bytes()[gt - 1] == b'/' {
+            rest = &after_open[gt + 1..];
+            continue;
+        }
+        let body_start = gt + 1;
+        let Some(end) = after_open[body_start..].find(&close) else { break };
+        elements.push(&after_open[body_start..body_start + end]);
+        rest = &after_open[body_start + end + close.len()..];
+    }
+
+    elements
+}
+
+fn extract_element(xml: &str, tag: &str) -> Option<String> {
+    extract_elements(xml, tag).into_iter().next().map(|s| s.trim().to_string())
+}
+
+/// Locates the next `open` (e.g. `"<track"`) whose following byte is
+/// whitespace, `>`, or `/`, so `<track>` matches but `<trackList>` doesn't.
+fn find_tag_start(xml: &str, open: &str) -> Option<usize> {
+    let mut search_from = 0;
+    while let Some(idx) = xml[search_from..].find(open) {
+        let pos = search_from + idx;
+        let after = pos + open.len();
+        match xml.as_bytes().get(after) {
+            Some(b) if b.is_ascii_whitespace() || *b == b'>' || *b == b'/' => return Some(pos),
+            None => return Some(pos),
+            _ => search_from = pos + open.len(),
+        }
+    }
+    None
+}
+
+fn decode_location(raw: &str) -> String {
+    let unescaped = unescape_xml(raw);
+    match unescaped.strip_prefix("file://") {
+        Some(rest) => percent_decode(rest),
+        None => unescaped,
+    }
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(byte) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn unescape_xml(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c != '&' {
+            out.push(c);
+            continue;
+        }
+
+        let mut entity = String::new();
+        let mut closed = false;
+        for _ in 0..16 {
+            match chars.peek() {
+                Some(';') => {
+                    chars.next();
+                    closed = true;
+                    break;
+                }
+                Some(&ec) => {
+                    entity.push(ec);
+                    chars.next();
+                }
+                None => break,
+            }
+        }
+
+        if !closed {
+            out.push('&');
+            out.push_str(&entity);
+            continue;
+        }
+
+        match entity.as_str() {
+            "amp" => out.push('&'),
+            "lt" => out.push('<'),
+            "gt" => out.push('>'),
+            "quot" => out.push('"'),
+            "apos" => out.push('\''),
+            _ if entity.starts_with('#') => {
+                let digits = &entity[1..];
+                let code = match digits.strip_prefix('x').or_else(|| digits.strip_prefix('X')) {
+                    Some(hex) => u32::from_str_radix(hex, 16).ok(),
+                    None => digits.parse::<u32>().ok(),
+                };
+                if let Some(ch) = code.and_then(char::from_u32) {
+                    out.push(ch);
+                }
+            }
+            _ => {
+                out.push('&');
+                out.push_str(&entity);
+                out.push(';');
+            }
+        }
+    }
+
+    out
 }
 
 fn parse_extinf(rest: &str) -> (Option<i64>, Option<String>, Option<String>) {
@@ -259,6 +422,87 @@ mod tests {
 
         assert_eq!(playlist.tracks.len(), 1);
         assert_eq!(playlist.tracks[0].path, "b.mp3");
+    }
+
+    #[test]
+    fn parses_xspf_with_artist_title_and_duration() {
+        let xspf = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+                    <playlist version=\"1\" xmlns=\"http://xspf.org/ns/0/\">\n\
+                    <trackList>\n\
+                    <track>\n\
+                    <location>file:///music/roygbiv.flac</location>\n\
+                    <title>Roygbiv</title>\n\
+                    <creator>Boards of Canada</creator>\n\
+                    <duration>245000</duration>\n\
+                    </track>\n\
+                    </trackList>\n\
+                    </playlist>\n";
+        let playlist = Playlist::parse_xspf("test", xspf);
+
+        assert_eq!(playlist.tracks.len(), 1);
+        let track = &playlist.tracks[0];
+        assert_eq!(track.path, "/music/roygbiv.flac");
+        assert_eq!(track.title.as_deref(), Some("Roygbiv"));
+        assert_eq!(track.artist.as_deref(), Some("Boards of Canada"));
+        assert_eq!(track.duration_secs, Some(245));
+    }
+
+    #[test]
+    fn parses_xspf_with_multiple_tracks_and_no_metadata() {
+        let xspf = "<playlist><trackList>\
+                    <track><location>a.mp3</location></track>\
+                    <track><location>b.mp3</location></track>\
+                    </trackList></playlist>";
+        let playlist = Playlist::parse_xspf("test", xspf);
+
+        assert_eq!(playlist.tracks.len(), 2);
+        assert_eq!(playlist.tracks[0].path, "a.mp3");
+        assert_eq!(playlist.tracks[1].path, "b.mp3");
+        assert!(playlist.tracks[0].title.is_none());
+    }
+
+    #[test]
+    fn xspf_track_without_location_is_dropped() {
+        let xspf = "<playlist><trackList>\
+                    <track><title>Orphan</title></track>\
+                    <track><location>b.mp3</location></track>\
+                    </trackList></playlist>";
+        let playlist = Playlist::parse_xspf("test", xspf);
+
+        assert_eq!(playlist.tracks.len(), 1);
+        assert_eq!(playlist.tracks[0].path, "b.mp3");
+    }
+
+    #[test]
+    fn xspf_unescapes_entities_in_title() {
+        let xspf = "<playlist><trackList><track>\
+                    <location>a.mp3</location>\
+                    <title>Rock &amp; Roll &lt;live&gt;</title>\
+                    </track></trackList></playlist>";
+        let playlist = Playlist::parse_xspf("test", xspf);
+
+        assert_eq!(playlist.tracks[0].title.as_deref(), Some("Rock & Roll <live>"));
+    }
+
+    #[test]
+    fn xspf_negative_duration_is_normalized_to_none() {
+        let xspf = "<playlist><trackList><track>\
+                    <location>stream.mp3</location>\
+                    <duration>-1</duration>\
+                    </track></trackList></playlist>";
+        let playlist = Playlist::parse_xspf("test", xspf);
+
+        assert_eq!(playlist.tracks[0].duration_secs, None);
+    }
+
+    #[test]
+    fn xspf_keeps_non_file_uris_as_is() {
+        let xspf = "<playlist><trackList><track>\
+                    <location>http://example.invalid/stream.mp3</location>\
+                    </track></trackList></playlist>";
+        let playlist = Playlist::parse_xspf("test", xspf);
+
+        assert_eq!(playlist.tracks[0].path, "http://example.invalid/stream.mp3");
     }
 
     #[test]
