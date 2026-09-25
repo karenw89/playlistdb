@@ -28,9 +28,9 @@ tool; see below for the couple of lines that wires it up.
 - Computes total duration and a count of tracks missing title or artist.
 - Flags tracks that share the same path, in the order they first appear,
   with how many times each one repeats.
-- Renders a `Summary` either as plain text or as JSON, from the same data,
-  so a caller's own `--json` flag can select the shape without touching the
-  underlying logic.
+- Renders a `Summary` as plain text, single-line JSON, or indented JSON,
+  from the same data, so a caller's own `--json`/`--json-pretty` flags can
+  select the shape without touching the underlying logic.
 - Writes a `Playlist` back out to M3U text (`to_m3u`), round-tripping
   through `parse_m3u`.
 
@@ -69,8 +69,29 @@ JSON output (`--json`):
 {"name":"favorites.m3u","track_count":3,"total_duration_secs":725,"missing_metadata_count":1,"duplicate_paths":[],"tracks":[{"path":"../music/roygbiv.flac","title":"Roygbiv","artist":"Boards of Canada","duration_secs":245},{"path":"../music/xtal.flac","title":"Xtal","artist":"Aphex Twin","duration_secs":220},{"path":"track_09.flac","title":null,"artist":null,"duration_secs":null}]}
 ```
 
+Pretty JSON output (`--json-pretty`), same fields, indented for reading
+directly instead of piping somewhere:
+
+```json
+{
+  "name": "favorites.m3u",
+  "track_count": 3,
+  "total_duration_secs": 725,
+  "missing_metadata_count": 1,
+  "duplicate_paths": [],
+  "tracks": [
+    {
+      "path": "../music/roygbiv.flac",
+      "title": "Roygbiv",
+      "artist": "Boards of Canada",
+      "duration_secs": 245
+    }
+  ]
+}
+```
+
 ## Status
 
-Early. M3U/M3U8, PLS, and XSPF in, plain-text and JSON summaries out, M3U
-writer for round-tripping a `Playlist`, duplicate-path detection. No
-pretty-printed JSON option yet.
+Early. M3U/M3U8, PLS, and XSPF in, plain-text and JSON (compact or
+pretty-printed) summaries out, M3U writer for round-tripping a `Playlist`,
+duplicate-path detection.
