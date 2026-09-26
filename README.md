@@ -23,6 +23,10 @@ tool; see below for the couple of lines that wires it up.
   reading `<location>`, `<title>`, `<creator>`, and `<duration>` out of each
   `<track>`. `file://` locations are percent-decoded; other URI schemes are
   kept as-is.
+- `parse_auto` picks the right parser by sniffing the contents themselves
+  (an XML declaration or `<playlist>` tag, a `[playlist]` header, or M3U as
+  the fallback) instead of a file extension, for input that doesn't have
+  one - piped in over stdin, for instance.
 - `#EXTINF:-1,...` and PLS's `Length<n>=-1` (both conventions for "duration
   unknown") are normalized to `None` rather than kept as a sentinel value.
 - Computes total duration and a count of tracks missing title or artist.
@@ -92,6 +96,7 @@ directly instead of piping somewhere:
 
 ## Status
 
-Early. M3U/M3U8, PLS, and XSPF in, plain-text and JSON (compact or
-pretty-printed) summaries out, M3U writer for round-tripping a `Playlist`,
-duplicate-path detection.
+Early. M3U/M3U8, PLS, and XSPF in (by extension or, via `parse_auto`, by
+sniffing the contents), plain-text and JSON (compact or pretty-printed)
+summaries out, M3U writer for round-tripping a `Playlist`, duplicate-path
+detection.

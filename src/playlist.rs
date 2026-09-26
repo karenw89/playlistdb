@@ -117,6 +117,24 @@ impl Playlist {
         Playlist { name: name.into(), tracks }
     }
 
+    /// Guesses which format `contents` is in and dispatches to the matching
+    /// parser. Meant for input with no filename to sniff an extension from
+    /// (stdin, a pasted buffer, a byte stream from some other process):
+    /// an XML declaration or a `<playlist` tag means XSPF, a `[playlist]`
+    /// section header means PLS, and anything else is parsed as M3U, since
+    /// M3U has no header of its own that's actually required.
+    pub fn parse_auto(name: impl Into<String>, contents: &str) -> Playlist {
+        let name = name.into();
+        let trimmed = contents.trim_start();
+        if trimmed.starts_with("<?xml") || trimmed.starts_with("<playlist") {
+            Playlist::parse_xspf(name, contents)
+        } else if trimmed.get(..10).is_some_and(|s| s.eq_ignore_ascii_case("[playlist]")) {
+            Playlist::parse_pls(name, contents)
+        } else {
+            Playlist::parse_m3u(name, contents)
+        }
+    }
+
     /// Serializes back to M3U text. Round-trips with `parse_m3u`: a track
     /// gets an `#EXTINF` line only if it has a duration, title, or artist to
     /// report, and an unknown duration is written back out as `-1` (the same
@@ -503,6 +521,52 @@ mod tests {
         let playlist = Playlist::parse_xspf("test", xspf);
 
         assert_eq!(playlist.tracks[0].path, "http://example.invalid/stream.mp3");
+    }
+
+    #[test]
+    fn parse_auto_detects_xspf_from_xml_declaration() {
+        let xspf = "<?xml version=\"1.0\"?><playlist><trackList>\
+                    <track><location>a.mp3</location></track>\
+                    </trackList></playlist>";
+        let playlist = Playlist::parse_auto("test", xspf);
+
+        assert_eq!(playlist.tracks.len(), 1);
+        assert_eq!(playlist.tracks[0].path, "a.mp3");
+    }
+
+    #[test]
+    fn parse_auto_detects_xspf_without_xml_declaration() {
+        let xspf = "<playlist><trackList><track><location>a.mp3</location></track></trackList></playlist>";
+        let playlist = Playlist::parse_auto("test", xspf);
+
+        assert_eq!(playlist.tracks.len(), 1);
+    }
+
+    #[test]
+    fn parse_auto_detects_pls_from_section_header() {
+        let pls = "[playlist]\nFile1=a.mp3\nTitle1=A Song\nLength1=10\n";
+        let playlist = Playlist::parse_auto("test", pls);
+
+        assert_eq!(playlist.tracks.len(), 1);
+        assert_eq!(playlist.tracks[0].path, "a.mp3");
+    }
+
+    #[test]
+    fn parse_auto_defaults_to_m3u() {
+        let m3u = "#EXTM3U\n#EXTINF:245,Boards of Canada - Roygbiv\n../music/roygbiv.flac\n";
+        let playlist = Playlist::parse_auto("test", m3u);
+
+        assert_eq!(playlist.tracks.len(), 1);
+        assert_eq!(playlist.tracks[0].artist.as_deref(), Some("Boards of Canada"));
+    }
+
+    #[test]
+    fn parse_auto_defaults_to_m3u_with_no_header_at_all() {
+        let m3u = "song.mp3\n";
+        let playlist = Playlist::parse_auto("test", m3u);
+
+        assert_eq!(playlist.tracks.len(), 1);
+        assert_eq!(playlist.tracks[0].path, "song.mp3");
     }
 
     #[test]
