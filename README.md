@@ -55,6 +55,14 @@ fn main() {
 }
 ```
 
+There is also a ready-made version in `examples/summarize.rs`. It sniffs
+the format with `parse_auto` and reads from a file argument or stdin:
+
+```
+cargo run --example summarize -- --format=json-pretty favorites.m3u
+cat favorites.xspf | cargo run --example summarize -- --format=text
+```
+
 Human output:
 
 ```
